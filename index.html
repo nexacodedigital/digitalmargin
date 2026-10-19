@@ -913,24 +913,29 @@ function setupKasirAutocomplete() {
     const listContainer = document.getElementById('kasir-autocomplete-list');
     if(!input || !listContainer) return;
     
+    // 1. HAPUS PAKSA fungsi bawaan HTML yang bikin dobel dan nge-lag
+    input.removeAttribute('oninput');
+    input.oninput = null;
+    
+    let typingTimer; // Timer untuk memisahkan ngetik dan proses render
+    
     input.addEventListener('input', function() { 
         const val = this.value;
-        listContainer.classList.remove('hidden'); 
         
-        // 1. Tampilkan status "Memuat..." secara INSTAN setiap kali tombol ditekan
-        listContainer.innerHTML = '<div class="p-3 text-xs text-blue-600 font-bold text-center"><i class="fas fa-spinner fa-spin mr-2"></i>Mencari...</div>';
-        
-        clearTimeout(kasirSearchTimer);
-        
-        // 2. Beri jeda super singkat (50 milidetik) agar browser sempat menggambar tulisan loading, lalu langsung render hasilnya
-        kasirSearchTimer = setTimeout(() => {
+        // 2. KUNCI 0 DETIK: Lepas antrean, biarkan huruf muncul di layar secara instan!
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => {
+            listContainer.classList.remove('hidden'); 
             renderKasirList(val); 
-        }, 50); 
+            
+            // Eksekusi autoFillKasir di sini agar tidak memblokir ketikan keyboard
+            autoFillKasir(); 
+        }, 15); // Jeda 15ms tidak akan terasa oleh mata, tapi sangat melegakan CPU/Memori browser
     });
     
     input.addEventListener('focus', function() { 
-        renderKasirList(this.value); 
         listContainer.classList.remove('hidden'); 
+        renderKasirList(this.value); 
     });
     
     document.addEventListener('click', function(e) { 
@@ -939,7 +944,6 @@ function setupKasirAutocomplete() {
         }
     });
 }
-
 function renderKasirList(filterText) {
     const listContainer = document.getElementById('kasir-autocomplete-list'); 
     listContainer.innerHTML = ''; 
