@@ -906,13 +906,34 @@
         });
     }
 
-    function setupKasirAutocomplete() {
-        const input = document.getElementById('kasir-select-barang'); const listContainer = document.getElementById('kasir-autocomplete-list');
-        if(!input || !listContainer) return;
-        input.addEventListener('input', function() { renderKasirList(this.value); listContainer.classList.remove('hidden'); });
-        input.addEventListener('focus', function() { renderKasirList(this.value); listContainer.classList.remove('hidden'); });
-        document.addEventListener('click', function(e) { if (e.target !== input && e.target !== listContainer && !listContainer.contains(e.target)) listContainer.classList.add('hidden'); });
-    }
+    let kasirDebounceTimer; // Variabel penyimpan jeda waktu
+
+function setupKasirAutocomplete() {
+    const input = document.getElementById('kasir-select-barang'); 
+    const listContainer = document.getElementById('kasir-autocomplete-list');
+    if(!input || !listContainer) return;
+    
+    // Event listener input dengan Debounce 300ms
+    input.addEventListener('input', function() { 
+        clearTimeout(kasirDebounceTimer);
+        const val = this.value;
+        kasirDebounceTimer = setTimeout(() => {
+            renderKasirList(val); 
+            listContainer.classList.remove('hidden'); 
+        }, 300); 
+    });
+    
+    input.addEventListener('focus', function() { 
+        renderKasirList(this.value); 
+        listContainer.classList.remove('hidden'); 
+    });
+    
+    document.addEventListener('click', function(e) { 
+        if (e.target !== input && e.target !== listContainer && !listContainer.contains(e.target)) {
+            listContainer.classList.add('hidden');
+        }
+    });
+}
 
     function renderKasirList(filterText) {
         const listContainer = document.getElementById('kasir-autocomplete-list'); listContainer.innerHTML = ''; const filterLower = (filterText || '').toLowerCase();
