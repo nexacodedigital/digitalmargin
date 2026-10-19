@@ -995,6 +995,27 @@ function renderKasirList(filterText) {
         listContainer.appendChild(div);
     });
 }
+    // === KODE YANG TIDAK SENGAJA TERHAPUS ===
+    document.getElementById('current-date').innerText = new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    document.getElementById('kasir-tgl').valueAsDate = new Date();
+
+    window.onload = () => { 
+        const session = localStorage.getItem('margin_session'); 
+        if(session) { currentUser = JSON.parse(session); startApp(); } 
+        setupKasirAutocomplete();
+    };
+
+    document.getElementById('form-login').onsubmit = async (e) => {
+        e.preventDefault(); const u = document.getElementById('login-user').value.trim(); const p = document.getElementById('login-pass').value.trim();
+        fastLoader('VERIFIKASI AKUN...', async () => {
+            try { 
+                const data = await api('login', { username: u, password: p }); 
+                currentUser = data; localStorage.setItem('margin_session', JSON.stringify(data)); 
+                startApp();
+            } catch(err) { toast(err.message, 'error'); }
+        });
+    };
+    // === BATAS KODE YANG TERHAPUS ===
     function doLogout() { 
         showConfirm('Konfirmasi Logout', 'Apakah Anda yakin ingin keluar dari aplikasi?', 'warning', 'Ya, Logout', () => {
             localStorage.removeItem('margin_session'); location.reload(); 
