@@ -799,15 +799,14 @@
         } else { toast('Kode Akses Salah!', 'error'); document.getElementById('pin-input').value = ''; document.getElementById('pin-input').focus(); }
     }
 
-    function fastLoader(text, callback) {
-        document.getElementById('loader-text').innerText = text; document.getElementById('loader').style.display = 'flex';
-        let p = 0; const el = document.getElementById('loader-percent');
-        const int = setInterval(() => { p += Math.floor(Math.random() * 30) + 20; if(p > 99) p = 99; el.innerText = p + '%'; }, 15);
-        setTimeout(async () => {
-            clearInterval(int); el.innerText = '100%';
-            if(callback) { try { await callback(); } catch(e) {} }
-            setTimeout(() => { document.getElementById('loader').style.display = 'none'; el.innerText = '0%'; }, 150);
-        }, 150); 
+   function fastLoader(text, callback) {
+        // Eksekusi data super cepat di background tanpa memunculkan layar "Memuat..." yang bikin tertahan
+        if(callback) { 
+            try { 
+                const result = callback(); 
+                if (result instanceof Promise) result.catch(e => {});
+            } catch(e) {} 
+        }
     }
     
     let confirmActionCallback = null;
@@ -876,33 +875,32 @@
 
     async function mockApi(action, payload) {
         return new Promise((resolve, reject) => {
-            setTimeout(() => {
-                let resData = null;
-                try {
-                    switch(action) {
-                        case 'login':
-                            const user = dummyDB.users.find(u => String(u.username) === String(payload.username) && String(u.password) === String(payload.password));
-                            if(user) resData = { username: user.username, role: user.role, nama: user.nama }; 
-                            else { reject(new Error("Username atau Password salah!")); return; } break;
-                        case 'getDataAwal': resData = { ...dummyDB }; break;
-                        case 'updateAkun':
-                            const uIdx = dummyDB.users.findIndex(u => u.username === payload.oldUser);
-                            if(uIdx !== -1) { dummyDB.users[uIdx].username = payload.newUser; dummyDB.users[uIdx].password = payload.newPass; }
-                            resData = { success: true }; break;
-                        case 'saveBarang': const bIdx = dummyDB.barang.findIndex(x => x.kode === payload.kode); if(bIdx > -1) dummyDB.barang[bIdx] = payload; else dummyDB.barang.push(payload); resData = true; break;
-                        case 'delBarang': dummyDB.barang = dummyDB.barang.filter(x => x.kode !== payload.id); resData = true; break;
-                        case 'saveDapur': const dIdx = dummyDB.dapur.findIndex(x => x.id === payload.id); if(dIdx > -1) dummyDB.dapur[dIdx] = payload; else dummyDB.dapur.push(payload); resData = true; break;
-                        case 'delDapur': dummyDB.dapur = dummyDB.dapur.filter(x => x.id !== payload.id); resData = true; break;
-                        case 'savePerusahaan': const pIdx = dummyDB.perusahaan.findIndex(x => x.id === payload.id); if(pIdx > -1) dummyDB.perusahaan[pIdx] = payload; else dummyDB.perusahaan.push(payload); resData = true; break;
-                        case 'delPerusahaan': dummyDB.perusahaan = dummyDB.perusahaan.filter(x => x.id !== payload.id); resData = true; break;
-                        case 'saveTransaksi': const tIdx = dummyDB.transaksi.findIndex(x => x.id === payload.id); if(tIdx > -1) dummyDB.transaksi[tIdx] = payload; else dummyDB.transaksi.push(payload); resData = true; break;
-                        case 'delTransaksi': dummyDB.transaksi = dummyDB.transaksi.filter(t => t.id !== payload.id); resData = true; break;
-                        case 'savePengeluaran': const pgIdx = dummyDB.pengeluaran.findIndex(x => x.id === payload.id); if(pgIdx > -1) dummyDB.pengeluaran[pgIdx] = payload; else dummyDB.pengeluaran.push(payload); resData = true; break;
-                        case 'delPengeluaran': dummyDB.pengeluaran = dummyDB.pengeluaran.filter(x => x.id !== payload.id); resData = true; break;
-                    }
-                    localStorage.setItem(DUMMY_DB_KEY, JSON.stringify(dummyDB)); resolve(resData);
-                } catch(err) { reject(err); }
-            }, 300); 
+            // HAPUS setTimeout 300ms DI SINI AGAR DATA DISIMPAN 0 DETIK (INSTAN)
+            let resData = null;
+            try {
+                switch(action) {
+                    case 'login':
+                        const user = dummyDB.users.find(u => String(u.username) === String(payload.username) && String(u.password) === String(payload.password));
+                        if(user) resData = { username: user.username, role: user.role, nama: user.nama }; 
+                        else { reject(new Error("Username atau Password salah!")); return; } break;
+                    case 'getDataAwal': resData = { ...dummyDB }; break;
+                    case 'updateAkun':
+                        const uIdx = dummyDB.users.findIndex(u => u.username === payload.oldUser);
+                        if(uIdx !== -1) { dummyDB.users[uIdx].username = payload.newUser; dummyDB.users[uIdx].password = payload.newPass; }
+                        resData = { success: true }; break;
+                    case 'saveBarang': const bIdx = dummyDB.barang.findIndex(x => x.kode === payload.kode); if(bIdx > -1) dummyDB.barang[bIdx] = payload; else dummyDB.barang.push(payload); resData = true; break;
+                    case 'delBarang': dummyDB.barang = dummyDB.barang.filter(x => x.kode !== payload.id); resData = true; break;
+                    case 'saveDapur': const dIdx = dummyDB.dapur.findIndex(x => x.id === payload.id); if(dIdx > -1) dummyDB.dapur[dIdx] = payload; else dummyDB.dapur.push(payload); resData = true; break;
+                    case 'delDapur': dummyDB.dapur = dummyDB.dapur.filter(x => x.id !== payload.id); resData = true; break;
+                    case 'savePerusahaan': const pIdx = dummyDB.perusahaan.findIndex(x => x.id === payload.id); if(pIdx > -1) dummyDB.perusahaan[pIdx] = payload; else dummyDB.perusahaan.push(payload); resData = true; break;
+                    case 'delPerusahaan': dummyDB.perusahaan = dummyDB.perusahaan.filter(x => x.id !== payload.id); resData = true; break;
+                    case 'saveTransaksi': const tIdx = dummyDB.transaksi.findIndex(x => x.id === payload.id); if(tIdx > -1) dummyDB.transaksi[tIdx] = payload; else dummyDB.transaksi.push(payload); resData = true; break;
+                    case 'delTransaksi': dummyDB.transaksi = dummyDB.transaksi.filter(t => t.id !== payload.id); resData = true; break;
+                    case 'savePengeluaran': const pgIdx = dummyDB.pengeluaran.findIndex(x => x.id === payload.id); if(pgIdx > -1) dummyDB.pengeluaran[pgIdx] = payload; else dummyDB.pengeluaran.push(payload); resData = true; break;
+                    case 'delPengeluaran': dummyDB.pengeluaran = dummyDB.pengeluaran.filter(x => x.id !== payload.id); resData = true; break;
+                }
+                localStorage.setItem(DUMMY_DB_KEY, JSON.stringify(dummyDB)); resolve(resData);
+            } catch(err) { reject(err); }
         });
     }
 
@@ -1036,10 +1034,13 @@ function renderKasirList(filterText) {
     }
 
     function updateAllViews() {
-        renderDashboard(); renderBarang(); renderDapur(); renderPerusahaan();
-        renderArsip(); renderLaporanLengkap(); renderLaporanDapur(); renderBukuKas(); renderAkun(); populateSelects();
+        // Trik Super Cepat: Render tabel secara bergantian (dicicil) dengan jeda sangat kecil di background.
+        // Ini mencegah layar Kasir jadi patah-patah/freeze saat tombol Simpan ditekan.
+        setTimeout(() => { renderDashboard(); populateSelects(); }, 0);
+        setTimeout(() => { renderBarang(); renderDapur(); renderPerusahaan(); }, 20);
+        setTimeout(() => { renderArsip(); renderLaporanLengkap(); }, 40);
+        setTimeout(() => { renderLaporanDapur(); renderBukuKas(); renderAkun(); }, 60);
     }
-
     function nav(pageId) {
         document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
