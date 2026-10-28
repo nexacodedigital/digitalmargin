@@ -1409,6 +1409,57 @@
         document.getElementById('cart-subtotal').innerText = rp(sub); document.getElementById('cart-tambahan').innerText = rp(ongkir + pajakRp); document.getElementById('cart-grand-total').innerText = rp(sub + ongkir + pajakRp);
     }
     
+    // --- FUNGSI GENERATOR 25 FORMAT NOMOR INVOICE BERDASARKAN PERUSAHAAN ---
+    function generateCustomInvoiceId(perusId, tglStr) {
+        let pIndex = dataPerusahaan.findIndex(x => x.id === perusId);
+        if (pIndex < 0) pIndex = 0;
+        const formatIdx = (pIndex % 25) + 1;
+
+        const existingCount = dataTransaksi.filter(t => (t.perusId || t.idPerusahaan) === perusId).length;
+        const seqNum = existingCount + 1;
+
+        const pad2 = String(seqNum).padStart(2, '0');
+        const pad3 = String(seqNum).padStart(3, '0');
+        const pad4 = String(seqNum).padStart(4, '0');
+
+        const d = tglStr ? new Date(tglStr) : new Date();
+        const YYYY = d.getFullYear();
+        const YY = String(YYYY).slice(-2);
+        const MM = String(d.getMonth() + 1).padStart(2, '0');
+        const DD = String(d.getDate()).padStart(2, '0');
+        const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+        const MMM = months[d.getMonth()];
+
+        switch (formatIdx) {
+            case 1:  return `INV-${YYYY}-${pad4}`;                  
+            case 2:  return `BILL/${pad3}/${YYYY}`;                 
+            case 3:  return `NEX.${YY}.${pad4}`;                    
+            case 4:  return `FTR-${DD}${MM}${YY}-${pad3}`;          
+            case 5:  return `PAY/${YYYY}/${MM}/${pad3}`;            
+            case 6:  return `NXD_${pad4}_${YYYY}`;                  
+            case 7:  return `TAG-${YY}-${MM}-${pad4}`;              
+            case 8:  return `DOC/INV/${pad4}`;                      
+            case 9:  return `TRX.${YYYY}${MM}${DD}.${pad3}`;        
+            case 10: return `BIL-${pad3}-${DD}${MMM}${YY}`;         
+            case 11: return `CINV/${YY}/${pad4}`;                   
+            case 12: return `FIN_${YYYY}_${pad4}`;                  
+            case 13: return `KWT-${pad3}0-${YYYY}`;                 
+            case 14: return `RCP/${DD}${MM}${YY}/${pad3}`;          
+            case 15: return `ORD-INV-${YY}-${pad4}`;                
+            case 16: return `SLS.${pad3}.${YYYY}`;                  
+            case 17: return `DGT/INV/${YY}/${MM}/${pad3}`;          
+            case 18: return `WBI-${YYYY}X${pad4}`;                  
+            case 19: return `PRO_${YY}-${pad4}`;                    
+            case 20: return `CST/${pad3}/${MM}/${YYYY}`;            
+            case 21: return `ADM-INV-${DD}${MM}${YYYY}-${pad2}`;    
+            case 22: return `SRV.${YY}.${MM}.${DD}.${pad4}`;        
+            case 23: return `XPD/${pad4}/INV${YY}`;                 
+            case 24: return `QTN-${YY}INV-${pad3}`;                 
+            case 25: return `ARC#${YYYY}#${pad4}`;                  
+            default: return `INV-${YYYY}-${pad4}`;
+        }
+    }
+
     function saveTransaksi() {
         if(cart.length === 0) return toast('Keranjang masih kosong!', 'error');
         const tgl = document.getElementById('kasir-tgl').value; const dapurId = document.getElementById('kasir-dapur').value; const perusId = document.getElementById('kasir-perusahaan').value;
@@ -1420,7 +1471,10 @@
         let sub = 0, totOps = 0; cart.forEach(c => { sub += (c.jual * c.qty); totOps += c.ops; });
         const pajakRp = sub * (pajakPersen / 100); const grand = sub + ongkir + pajakRp;
         const meta = { isMeta: true, metode, ongkir, pajakPersen, pajakRp, bebanTambahan }; const detailToSave = [...cart, meta];
-        const targetId = currentEditInvoiceId || ('INV-'+Date.now());
+        
+        // Panggil fungsi 25 format nomor invoice di sini
+        const targetId = currentEditInvoiceId || generateCustomInvoiceId(perusId, tgl);
+        
         const payload = { id: targetId, tanggal: tgl, dapurId: dapurId, perusId: perusId, idDapur: dapurId, idPerusahaan: perusId, subtotal: sub, totalOps: totOps, grandTotal: grand, detail: JSON.stringify(detailToSave), _parsed: detailToSave };
         
         if(currentEditInvoiceId) { const idx = dataTransaksi.findIndex(x => x.id === currentEditInvoiceId); if(idx > -1) dataTransaksi[idx] = payload; currentEditInvoiceId = null; toast('Transaksi diperbarui!'); } 
@@ -1432,7 +1486,6 @@
         const saveBtn = document.getElementById('btn-save-transaksi'); if(saveBtn) saveBtn.innerHTML = '<i class="fas fa-check-double"></i> SIMPAN TRANSAKSI & CETAK SURAT JALAN';
         nav('arsip'); previewSuratJalan(targetId); api('saveTransaksi', payload);
     }
-
    function renderArsip() {
         const fDate = document.getElementById('filter-inv-tanggal').value; 
         const fDapurRaw = document.getElementById('filter-inv-dapur').value;
