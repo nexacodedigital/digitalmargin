@@ -831,7 +831,7 @@
     const parseRupiahUI = (val) => { if(!val) return 0; return parseFloat(val.toString().replace(/\./g, '').replace(/,/g, '.')); };
     const setRupiahUI = (num) => String(num || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 
-    // Pre-parse JSON Detail sekali saja agar aplikasi tidak lag saat buka laporan / dashboard
+   // Pre-parse JSON Detail & Hitung Ulang Akurat dari Item (Anti Beda Harga/Total)
     function getParsedDetails(t) {
         if (!t._parsed) {
             try {
@@ -841,16 +841,53 @@
         return t._parsed;
     }
 
+    function recalcTransactionTotals(t) {
+        const details = getParsedDetails(t);
+        const items = details.filter(d => !d.isMeta);
+        const meta = details.find(d => d.isMeta) || { metode: 'Cash (Tunai)', ongkir: 0, pajakPersen: 0, pajakRp: 0, bebanTambahan: 'Margin', createdAt: 0 };
+        
+        let realSub = 0, realOps = 0;
+        items.forEach(item => {
+            const q = Number(item.qty) || 0;
+            const j = Number(item.jual) || 0;
+            const b = Number(item.beli) || 0;
+            const opsP = Number(item.opsPersen) || 0;
+            item.kotor = (j - b) * q;
+            item.ops = (j * q) * (opsP / 100);
+            item.bersih = item.kotor - item.ops;
+            realSub += (j * q);
+            realOps += item.ops;
+        });
+
+        const pjkPersen = Number(meta.pajakPersen) || 0;
+        const pjkRp = pjkPersen > 0 ? Math.round(realSub * (pjkPersen / 100)) : (Number(meta.pajakRp) || 0);
+        const ongkirRp = Number(meta.ongkir) || 0;
+        const realGrand = realSub + pjkRp + ongkirRp;
+
+        meta.pajakRp = pjkRp;
+        t.subtotal = realSub;
+        t.totalOps = realOps;
+        t.grandTotal = realGrand;
+        t.grand = realGrand;
+
+        return { items, meta, subT: realSub, pjkRp, ongkirRp, grandT: realGrand };
+    }
+
+    // Perbaikan Timezone WIB: Jangan potong string ISO UTC dengan split('T')[0] karena tanggal akan mundur 1 hari!
     const normalizeDate = (dStr) => {
-        if (!dStr) return ""; let str = String(dStr).trim();
-        if (str.includes('T')) return str.split('T')[0];
-        if (str.match(/^\d{4}-\d{2}-\d{2}/)) return str.substring(0, 10);
-        if (str.match(/^\d{2}[\/\-]\d{2}[\/\-]\d{4}/)) { const p = str.substring(0,10).split(/[\/\-]/); return `${p[2]}-${p[1]}-${p[0]}`; }
+        if (!dStr) return ""; 
+        let str = String(dStr).trim();
+        if (str.match(/^\d{4}-\d{2}-\d{2}$/)) return str;
+        if (str.match(/^\d{2}[\/\-]\d{2}[\/\-]\d{4}/)) { 
+            const p = str.substring(0, 10).split(/[\/\-]/); 
+            return `${p[2]}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`; 
+        }
         const d = new Date(str);
-        if (!isNaN(d.getTime())) return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        if (!isNaN(d.getTime())) {
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
         return str.substring(0, 10);
     };
-
     const formatDate = (dateStr) => { 
         if(!dateStr) return "-"; const norm = normalizeDate(dateStr);
         if (norm.match(/^\d{4}-\d{2}-\d{2}$/)) { const p = norm.split('-'); return `${p[2]}/${p[1]}/${p[0]}`; }
@@ -1102,13 +1139,36 @@
         refreshDataServer(true);
     }
     
+   let isSavingTrx = false;
+
     async function refreshDataServer(isBackground = false) {
+        if (isSavingTrx && isBackground) return; // Jangan timpa layar saat sedang proses simpan transaksi!
         const icon = document.getElementById('sync-icon');
         if(icon) icon.classList.add('fa-spin');
         try {
             const data = await api('getDataAwal');
+            if (isSavingTrx && isBackground) return;
             dataBarang = data.barang || []; dataDapur = data.dapur || []; dataPerusahaan = data.perusahaan || []; 
-            dataTransaksi = data.transaksi || []; dataPengeluaran = data.pengeluaran || [];
+            
+            // Bersihkan jika ada ID kembar dari database lama & hitung ulang akurat
+            const rawTrx = data.transaksi || [];
+            const uniqueMap = new Map();
+            rawTrx.forEach((t, idx) => {
+                t._rowOrder = idx + 1; // Simpan urutan asli baris di Google Sheet
+                recalcTransactionTotals(t);
+                // Jika ada ID yang terlanjur duplikat namun isinya beda, beri pembeda agar tidak saling menimpa
+                let key = String(t.id || '').trim();
+                if (uniqueMap.has(key)) {
+                    const existing = uniqueMap.get(key);
+                    if (existing.detail !== t.detail) {
+                        key = `${key}-DUP${idx}`;
+                        t.id = key;
+                    }
+                }
+                uniqueMap.set(key, t);
+            });
+            dataTransaksi = Array.from(uniqueMap.values());
+            dataPengeluaran = data.pengeluaran || [];
             saveLocalCache();
             populateSelects();
             renderActivePageOnly();
@@ -1409,18 +1469,11 @@
         document.getElementById('cart-subtotal').innerText = rp(sub); document.getElementById('cart-tambahan').innerText = rp(ongkir + pajakRp); document.getElementById('cart-grand-total').innerText = rp(sub + ongkir + pajakRp);
     }
     
-    // --- FUNGSI GENERATOR 25 FORMAT NOMOR INVOICE BERDASARKAN PERUSAHAAN ---
+   // --- FUNGSI GENERATOR 25 FORMAT NOMOR INVOICE (100% ANTI-KEMBAR / ANTI-COLLISION) ---
     function generateCustomInvoiceId(perusId, tglStr) {
         let pIndex = dataPerusahaan.findIndex(x => x.id === perusId);
         if (pIndex < 0) pIndex = 0;
         const formatIdx = (pIndex % 25) + 1;
-
-        const existingCount = dataTransaksi.filter(t => (t.perusId || t.idPerusahaan) === perusId).length;
-        const seqNum = existingCount + 1;
-
-        const pad2 = String(seqNum).padStart(2, '0');
-        const pad3 = String(seqNum).padStart(3, '0');
-        const pad4 = String(seqNum).padStart(4, '0');
 
         const d = tglStr ? new Date(tglStr) : new Date();
         const YYYY = d.getFullYear();
@@ -1430,63 +1483,161 @@
         const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
         const MMM = months[d.getMonth()];
 
-        switch (formatIdx) {
-            case 1:  return `INV-${YYYY}-${pad4}`;                  
-            case 2:  return `BILL/${pad3}/${YYYY}`;                 
-            case 3:  return `NEX.${YY}.${pad4}`;                    
-            case 4:  return `FTR-${DD}${MM}${YY}-${pad3}`;          
-            case 5:  return `PAY/${YYYY}/${MM}/${pad3}`;            
-            case 6:  return `NXD_${pad4}_${YYYY}`;                  
-            case 7:  return `TAG-${YY}-${MM}-${pad4}`;              
-            case 8:  return `DOC/INV/${pad4}`;                      
-            case 9:  return `TRX.${YYYY}${MM}${DD}.${pad3}`;        
-            case 10: return `BIL-${pad3}-${DD}${MMM}${YY}`;         
-            case 11: return `CINV/${YY}/${pad4}`;                   
-            case 12: return `FIN_${YYYY}_${pad4}`;                  
-            case 13: return `KWT-${pad3}0-${YYYY}`;                 
-            case 14: return `RCP/${DD}${MM}${YY}/${pad3}`;          
-            case 15: return `ORD-INV-${YY}-${pad4}`;                
-            case 16: return `SLS.${pad3}.${YYYY}`;                  
-            case 17: return `DGT/INV/${YY}/${MM}/${pad3}`;          
-            case 18: return `WBI-${YYYY}X${pad4}`;                  
-            case 19: return `PRO_${YY}-${pad4}`;                    
-            case 20: return `CST/${pad3}/${MM}/${YYYY}`;            
-            case 21: return `ADM-INV-${DD}${MM}${YYYY}-${pad2}`;    
-            case 22: return `SRV.${YY}.${MM}.${DD}.${pad4}`;        
-            case 23: return `XPD/${pad4}/INV${YY}`;                 
-            case 24: return `QTN-${YY}INV-${pad3}`;                 
-            case 25: return `ARC#${YYYY}#${pad4}`;                  
-            default: return `INV-${YYYY}-${pad4}`;
+        const buildId = (seq) => {
+            const pad2 = String(seq).padStart(2, '0');
+            const pad3 = String(seq).padStart(3, '0');
+            const pad4 = String(seq).padStart(4, '0');
+            switch (formatIdx) {
+                case 1:  return `INV-${YYYY}-${pad4}`;                  
+                case 2:  return `BILL/${pad3}/${YYYY}`;                 
+                case 3:  return `NEX.${YY}.${pad4}`;                    
+                case 4:  return `FTR-${DD}${MM}${YY}-${pad3}`;          
+                case 5:  return `PAY/${YYYY}/${MM}/${pad3}`;            
+                case 6:  return `NXD_${pad4}_${YYYY}`;                  
+                case 7:  return `TAG-${YY}-${MM}-${pad4}`;              
+                case 8:  return `DOC/INV/${pad4}`;                      
+                case 9:  return `TRX.${YYYY}${MM}${DD}.${pad3}`;        
+                case 10: return `BIL-${pad3}-${DD}${MMM}${YY}`;         
+                case 11: return `CINV/${YY}/${pad4}`;                   
+                case 12: return `FIN_${YYYY}_${pad4}`;                  
+                case 13: return `KWT-${pad3}0-${YYYY}`;                 
+                case 14: return `RCP/${DD}${MM}${YY}/${pad3}`;          
+                case 15: return `ORD-INV-${YY}-${pad4}`;                
+                case 16: return `SLS.${pad3}.${YYYY}`;                  
+                case 17: return `DGT/INV/${YY}/${MM}/${pad3}`;          
+                case 18: return `WBI-${YYYY}X${pad4}`;                  
+                case 19: return `PRO_${YY}-${pad4}`;                    
+                case 20: return `CST/${pad3}/${MM}/${YYYY}`;            
+                case 21: return `ADM-INV-${DD}${MM}${YYYY}-${pad2}`;    
+                case 22: return `SRV.${YY}.${MM}.${DD}.${pad4}`;        
+                case 23: return `XPD/${pad4}/INV${YY}`;                 
+                case 24: return `QTN-${YY}INV-${pad3}`;                 
+                case 25: return `ARC#${YYYY}#${pad4}`;                  
+                default: return `INV-${YYYY}-${pad4}`;
+            }
+        };
+
+        // Cari nomor urut yang BELUM PERNAH dipakai di dataTransaksi (mencegah ID dobel setelah hapus invoice)
+        let seqNum = dataTransaksi.filter(t => (t.perusId || t.idPerusahaan) === perusId).length + 1;
+        let candidateId = buildId(seqNum);
+        while (dataTransaksi.some(t => String(t.id).trim().toLowerCase() === candidateId.toLowerCase())) {
+            seqNum++;
+            candidateId = buildId(seqNum);
+        }
+        return candidateId;
+    }
+
+    async function saveTransaksi() {
+        if (isSavingTrx) return; // Cegah klik ganda (Double-Click) yang bikin invoice dobel!
+        if(cart.length === 0) return toast('Keranjang masih kosong!', 'error');
+        
+        const tgl = document.getElementById('kasir-tgl').value; 
+        const dapurId = document.getElementById('kasir-dapur').value; 
+        const perusId = document.getElementById('kasir-perusahaan').value;
+        if(!tgl || !dapurId || !perusId) return toast('Lengkapi Dapur & Perusahaan dulu!', 'error');
+        
+        isSavingTrx = true;
+        const saveBtn = document.getElementById('btn-save-transaksi');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> MENYIMPAN TRANSAKSI...';
+        }
+
+        try {
+            const metode = document.getElementById('kasir-metode').value; 
+            const ongkir = parseRupiahUI(document.getElementById('kasir-ongkir').value) || 0;
+            const pajakPersen = Number(document.getElementById('kasir-pajak').value) || 0; 
+            const bebanTambahan = document.getElementById('kasir-beban').value;
+            
+            // Salin cart secara mendalam (deep clone) dan hitung ulang dari item
+            const cleanCart = JSON.parse(JSON.stringify(cart)).map(c => {
+                const q = Number(c.qty) || 0;
+                const j = Number(c.jual) || 0;
+                const b = Number(c.beli) || 0;
+                const opsP = Number(c.opsPersen) || 0;
+                const kotor = (j - b) * q;
+                const ops = (j * q) * (opsP / 100);
+                const bersih = kotor - ops;
+                return { ...c, qty: q, jual: j, beli: b, opsPersen: opsP, kotor, ops, bersih };
+            });
+
+            let sub = 0, totOps = 0; 
+            cleanCart.forEach(c => { sub += (c.jual * c.qty); totOps += c.ops; });
+            const pajakRp = Math.round(sub * (pajakPersen / 100)); 
+            const grand = sub + ongkir + pajakRp;
+
+            // Pertahankan waktu pembuatan asli jika sedang mode Edit, atau buat timestamp baru jika Invoice baru
+            let createdTimestamp = Date.now();
+            if (currentEditInvoiceId) {
+                const oldTrx = dataTransaksi.find(x => x.id === currentEditInvoiceId);
+                if (oldTrx) {
+                    const oldMeta = getParsedDetails(oldTrx).find(d => d.isMeta);
+                    if (oldMeta && oldMeta.createdAt) createdTimestamp = oldMeta.createdAt;
+                }
+            }
+
+            const meta = { isMeta: true, metode, ongkir, pajakPersen, pajakRp, bebanTambahan, createdAt: createdTimestamp }; 
+            const detailToSave = [...cleanCart, meta];
+            
+            const targetId = currentEditInvoiceId || generateCustomInvoiceId(perusId, tgl);
+            const maxRowOrder = dataTransaksi.reduce((max, item) => Math.max(max, item._rowOrder || 0), 0);
+
+            const payload = { 
+                id: targetId, 
+                tanggal: normalizeDate(tgl), 
+                dapurId: dapurId, 
+                perusId: perusId, 
+                idDapur: dapurId, 
+                idPerusahaan: perusId, 
+                subtotal: sub, 
+                totalOps: totOps, 
+                grandTotal: grand, 
+                grand: grand,
+                detail: JSON.stringify(detailToSave), 
+                _parsed: detailToSave,
+                _rowOrder: currentEditInvoiceId ? (dataTransaksi.find(x => x.id === currentEditInvoiceId)?._rowOrder || maxRowOrder + 1) : (maxRowOrder + 1)
+            };
+            
+            if(currentEditInvoiceId) { 
+                const idx = dataTransaksi.findIndex(x => x.id === currentEditInvoiceId); 
+                if(idx > -1) dataTransaksi[idx] = payload; 
+                currentEditInvoiceId = null; 
+                toast('Transaksi diperbarui!'); 
+            } else { 
+                dataTransaksi.push(payload); 
+                toast('Transaksi tersimpan!'); 
+            }
+            
+            saveLocalCache();
+            cart = []; renderCart(); 
+            document.getElementById('kasir-ongkir').value = 0; 
+            document.getElementById('kasir-pajak').value = 0; 
+            calcCartTotal(); 
+            
+            nav('arsip'); 
+            previewSuratJalan(targetId); 
+            await api('saveTransaksi', payload);
+        } catch(err) {
+            console.warn('Sync warning:', err);
+        } finally {
+            isSavingTrx = false;
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '<i class="fas fa-check-double"></i> SIMPAN TRANSAKSI & CETAK SURAT JALAN';
+            }
         }
     }
 
-    function saveTransaksi() {
-        if(cart.length === 0) return toast('Keranjang masih kosong!', 'error');
-        const tgl = document.getElementById('kasir-tgl').value; const dapurId = document.getElementById('kasir-dapur').value; const perusId = document.getElementById('kasir-perusahaan').value;
-        if(!tgl || !dapurId || !perusId) return toast('Lengkapi Dapur & Perusahaan dulu!', 'error');
-        
-        const metode = document.getElementById('kasir-metode').value; const ongkir = parseRupiahUI(document.getElementById('kasir-ongkir').value) || 0;
-        const pajakPersen = Number(document.getElementById('kasir-pajak').value) || 0; const bebanTambahan = document.getElementById('kasir-beban').value;
-        
-        let sub = 0, totOps = 0; cart.forEach(c => { sub += (c.jual * c.qty); totOps += c.ops; });
-        const pajakRp = sub * (pajakPersen / 100); const grand = sub + ongkir + pajakRp;
-        const meta = { isMeta: true, metode, ongkir, pajakPersen, pajakRp, bebanTambahan }; const detailToSave = [...cart, meta];
-        
-        // Panggil fungsi 25 format nomor invoice di sini
-        const targetId = currentEditInvoiceId || generateCustomInvoiceId(perusId, tgl);
-        
-        const payload = { id: targetId, tanggal: tgl, dapurId: dapurId, perusId: perusId, idDapur: dapurId, idPerusahaan: perusId, subtotal: sub, totalOps: totOps, grandTotal: grand, detail: JSON.stringify(detailToSave), _parsed: detailToSave };
-        
-        if(currentEditInvoiceId) { const idx = dataTransaksi.findIndex(x => x.id === currentEditInvoiceId); if(idx > -1) dataTransaksi[idx] = payload; currentEditInvoiceId = null; toast('Transaksi diperbarui!'); } 
-        else { dataTransaksi.push(payload); toast('Transaksi tersimpan!'); }
-        
-        saveLocalCache();
-        cart = []; renderCart(); document.getElementById('kasir-ongkir').value = 0; document.getElementById('kasir-pajak').value = 0; calcCartTotal(); 
-        
-        const saveBtn = document.getElementById('btn-save-transaksi'); if(saveBtn) saveBtn.innerHTML = '<i class="fas fa-check-double"></i> SIMPAN TRANSAKSI & CETAK SURAT JALAN';
-        nav('arsip'); previewSuratJalan(targetId); api('saveTransaksi', payload);
+    // Helper untuk mengambil waktu pembuatan transaksi agar urutan A -> B -> C selalu presisi
+    function getTrxCreationOrder(t) {
+        const details = getParsedDetails(t);
+        const meta = details.find(d => d.isMeta);
+        if (meta && meta.createdAt) return Number(meta.createdAt);
+        if (t._rowOrder) return Number(t._rowOrder);
+        return 0;
     }
-   function renderArsip() {
+
+    function renderArsip() {
         const fDate = document.getElementById('filter-inv-tanggal').value; 
         const fDapurRaw = document.getElementById('filter-inv-dapur').value;
         const fPerusRaw = document.getElementById('filter-inv-perusahaan').value;
@@ -1529,18 +1680,25 @@
                 return true; 
             } catch(e) { return true; }
         }).sort((a, b) => {
-            // PERBAIKAN: Mengurutkan ketat berdasarkan TANGGAL, bukan urutan input
+            // 1. Urutkan dari Tanggal Terbaru ke Terlama
             const dateA = normalizeDate(a.tanggal);
             const dateB = normalizeDate(b.tanggal);
             if (dateA !== dateB) return dateA < dateB ? 1 : -1;
-            // Jika di tanggal yang sama, urutkan dari ID terbaru
-            return a.id < b.id ? 1 : -1; 
+            
+            // 2. Jika di Tanggal yang sama, urutkan berdasarkan WAKTU PEMBUATAN (createdAt / urutan baris)
+            // Sehingga buat A -> B -> C (meskipun beda dapur/perusahaan) urutannya pasti C (paling atas), lalu B, lalu A!
+            const timeA = getTrxCreationOrder(a);
+            const timeB = getTrxCreationOrder(b);
+            if (timeA !== timeB) return timeB - timeA;
+
+            return String(b.id).localeCompare(String(a.id)); 
         });
         
         document.getElementById('table-arsip-body').innerHTML = filtered.map(t => {
+            const calc = recalcTransactionTotals(t); // Pastikan Grand Total 100% cocok dengan penjumlahan item!
             const dp = dataDapur.find(x=>x.id===(t.dapurId || t.idDapur))?.nama || t.dapurId || t.idDapur || '-'; 
-            const pr = dataPerusahaan.find(x=>x.id===(t.perusId || t.idPerusahaan))?.nama || t.perusId || t.idPerusahaan || '-'; const gt = Number(t.grandTotal || t.grand) || 0; 
-            return `<tr class="hover:bg-indigo-50/40"><td class="p-3.5 font-extrabold text-indigo-600">${t.id}</td><td class="p-3.5 font-semibold">${formatDate(t.tanggal)}</td><td class="p-3.5 uppercase font-bold text-slate-800">${dp}</td><td class="p-3.5 font-semibold text-slate-600">${pr}</td><td class="p-3.5 font-black text-right text-slate-900">${rp(gt)}</td>
+            const pr = dataPerusahaan.find(x=>x.id===(t.perusId || t.idPerusahaan))?.nama || t.perusId || t.idPerusahaan || '-'; 
+            return `<tr class="hover:bg-indigo-50/40"><td class="p-3.5 font-extrabold text-indigo-600">${t.id}</td><td class="p-3.5 font-semibold">${formatDate(t.tanggal)}</td><td class="p-3.5 uppercase font-bold text-slate-800">${dp}</td><td class="p-3.5 font-semibold text-slate-600">${pr}</td><td class="p-3.5 font-black text-right text-slate-900">${rp(calc.grandT)}</td>
             <td class="p-3.5 text-center whitespace-nowrap space-x-1">
                 <button onclick="previewInvoice('${t.id}')" class="bg-slate-800 text-white px-2.5 py-1.5 rounded-lg text-xs hover:bg-black font-bold shadow-sm" title="Invoice"><i class="fas fa-file-invoice-dollar"></i></button>
                 <button onclick="previewSuratJalan('${t.id}')" class="bg-emerald-600 text-white px-2.5 py-1.5 rounded-lg text-xs hover:bg-emerald-700 font-bold shadow-sm" title="Surat Jalan"><i class="fas fa-truck-fast"></i></button>
@@ -2423,10 +2581,14 @@
   function previewInvoice(idTrx) {
         const t = dataTransaksi.find(x=>x.id===idTrx); if(!t) return; 
         const perus = dataPerusahaan.find(x=>x.id===(t.perusId || t.idPerusahaan)) || {}; 
-        const details = getParsedDetails(t);
-        const subT = Number(t.subtotal) || 0;
-        const meta = details.find(d => d.isMeta) || { ongkir: 0, pajakRp: 0, pajakPersen: 0 }; const items = details.filter(d => !d.isMeta);
-        const invoiceGrandTotal = subT + (meta.pajakRp || 0);
+        
+        // Hitung ulang langsung dari daftar item agar Subtotal & Grand Total 100% akurat
+        const calc = recalcTransactionTotals(t);
+        const items = calc.items;
+        const meta = calc.meta;
+        const subT = calc.subT;
+        const invoiceGrandTotal = calc.grandT;
+
         const dpNama = dataDapur.find(x=>x.id===(t.dapurId || t.idDapur))?.nama || t.dapurId || t.idDapur || '-';
         let pIndex = dataPerusahaan.findIndex(x => x.id === (t.perusId || t.idPerusahaan)); if (pIndex < 0) pIndex = 0;
 
