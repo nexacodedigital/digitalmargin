@@ -1609,21 +1609,17 @@
         const rekNo = isTransfer ? perus.nomor : (meta.metode || 'CASH / TUNAI');
         const rekAn = isTransfer ? `a.n ${perus.atasnama}` : 'Lunas / Tunai';
 
-        const ttdName = perus.ttd_nama || perus.nama || 'Manajemen';
+       const ttdName = perus.ttd_nama || perus.nama || 'Manajemen';
         const ttdLink = perus.ttd_link;
 
-        // 25 Font Tanda Tangan Berbeda jika gambar TTD kosong!
-        const sigFonts = [
-            "'Great Vibes', cursive", "'Alex Brush', cursive", "'Dancing Script', cursive", "'Pacifico', cursive", "'Caveat', cursive",
-            "'Sacramento', cursive", "'Satisfy', cursive", "'Kaushan Script', cursive", "'Allura', cursive", "'Parisienne', cursive",
-            "'Yellowtail', cursive", "'Marck Script', cursive", "'Courgette', cursive", "'Damion', cursive", "'Pinyon Script', cursive",
-            "'Homemade Apple', cursive", "'La Belle Aurore', cursive", "'Meddon', cursive", "'Mr Dafoe', cursive", "'Mrs Saint Delafield', cursive",
-            "'Italianno', cursive", "'Zeyada', cursive", "'Permanent Marker', cursive", "'Rochester', cursive", "'Rock Salt', cursive"
-        ];
-        const sigFont = sigFonts[id];
+        // Jika ada link gambar TTD, tampilkan. Jika kosong, beri ruang kosong untuk Tanda Tangan Basah (Pulpen).
         const renderSig = (h = 52, color = 'inherit', extraStyle = '') => ttdLink 
             ? `<img src="${ttdLink}" alt="TTD" style="height:${h}px; object-fit:contain; margin: 4px auto; display:block;">` 
-            : `<div style="font-family: ${sigFont}; font-size: 26px; color: ${color}; line-height: 1.2; padding: 8px 0; ${extraStyle}">${ttdName}</div>`;
+            : `<div style="height:${h}px; width:100%;"></div>`;
+            
+        const ttdImg = (h = 55) => ttdLink 
+            ? `<img src="${ttdLink}" alt="TTD" style="height:${h}px; object-fit:contain; margin: 4px auto; display:block;">` 
+            : `<div style="height:${h}px; width:100%;"></div>`;
 
         let html = '';
         switch(id) {
